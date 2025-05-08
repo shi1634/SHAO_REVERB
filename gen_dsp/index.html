@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Simple Reverb by Shao</title>
+</head>
+<body>
+  <h1>Realtime Gen~ Reverb DSP (Shao)</h1>
+
+  <input type="file" id="audiofile" accept="audio/*">
+  <br><br>
+
+  <label>Reverb Time:
+    <input type="range" id="revtime" min="0.1" max="1" step="0.01" value="0.5">
+  </label>
+  <br><br>
+
+  <button id="play">Play Audio with Reverb</button>
+
+  <script src="reverb.js"></script>
+  <script>
+    let Module, audioCtx, buffer;
+
+    ReverbDSP().then((mod) => {
+      Module = mod;
+      Module.ccall("init_dsp", null, ["number", "number"], [44100, 128]);
+    });
+
+    document.getElementById('revtime').oninput = function(e) {
+      const val = parseFloat(e.target.value);
+      Module.ccall("set_param", null, ["number", "number"], [0, val]); // param index 0
+    };
+
+    document.getElementById('audiofile').onchange = function(e) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = () => {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        audioCtx.decodeAudioData(reader.result, (decoded) => {
+          buffer = decoded;
+        });
+      };
+      reader.readAsArrayBuffer(file);
+    };
+
+    document.getElementById('play').onclick = function() {
+      if (!buffer) {
+        alert("Please load audio first!");
+        return;
+      }
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+
+      const scriptNode = audioCtx.createScriptProcessor(128, 2, 2);
+      scriptNode.onaudioprocess = function(e) {
+        const inputL = e.inputBuffer.getChannelData(0);
+        const inputR = e.inputBuffer.getChannelData(1);
+        const outputL = e.outputBuffer.getChannelData(0);
+        const outputR = e.outputBuffer.getChannelData(1);
+
+        const n = 128;
+        const byteSize = n * 8; // double = 8 bytes
+
+        const ptrInL = Module._malloc(byteSize);
+        const ptrInR = Module._malloc(byteSize);
+        const ptrOutL = Module._malloc(byteSize);
+        const ptrOutR = Module._malloc(byteSize);
+
+        Module.HEAPF64.set(inputL, ptrInL / 8);
+        Module.HEAPF64.set(inputR, ptrInR / 8);
+
+        Module.ccall("process", null, 
+          ["number", "number", "number", "number", "number"], 
+          [ptrInL, ptrInR, ptrOutL, ptrOutR, n]);
+
+        outputL.set(Module.HEAPF64.subarray(ptrOutL / 8, ptrOutL / 8 + n));
+        outputR.set(Module.HEAPF64.subarray(ptrOutR / 8, ptrOutR / 8 + n));
+
+        Module._free(ptrInL);
+        Module._free(ptrInR);
+        Module._free(ptrOutL);
+        Module._free(ptrOutR);
+      };
+
+      source.connect(scriptNode);
+      scriptNode.connect(audioCtx.destination);
+      source.start();
+    };
+  </script>
+
+  <br>
+  <a href="Simple_Reverb_Shao.html">Back to Homepage</a>
+
+</body>
+</html>
